@@ -32,30 +32,44 @@ ASTRA_V2/
 ## High-Level Architecture
 
 ```mermaid
-graph TB
-    subgraph Frontend
-        A[Streamlit Dashboard]
-        B[Stoplight Page]
-    end
+flowchart TD
+ subgraph Client["Client"]
+        User[("User Browser")]
+  end
+ subgraph Visualization["Visualization"]
+        StreamlitUI["Streamlit Dashboard"]
+  end
+ subgraph API["API"]
+        FastAPI["FastAPI Service"]
+        Queue["In-Memory Queue"]
+        DBManager["DatabaseManager"]
+  end
+ subgraph Scheduler["Scheduler"]
+        APScheduler["Job Runner"]
+        MATLABEngine["MATLAB Engine"]
+        Metric1["runMetric1.m"]
+        Metric2["runMetric2.m"]
+  end
+ subgraph Persistence["Persistence"]
+        SQLite[("SQLite DB")]
+  end
+ subgraph Config["Config"]
+        ConfigLoader["config.py"]
+  end
+    User -- HTTP --> StreamlitUI
+    StreamlitUI -- GET /metrics --> FastAPI
+    APScheduler -- Executes --> MATLABEngine
+    MATLABEngine --> Metric1 & Metric2
+    Metric1 -- JSON metrics --> APScheduler
+    Metric2 -- JSON metrics --> APScheduler
+    APScheduler -- POST /metrics --> FastAPI
+    FastAPI --> Queue
+    Queue --> DBManager
+    DBManager <--> SQLite
+    FastAPI <-- Reads --> DBManager
+    ConfigLoader --> APScheduler & FastAPI & StreamlitUI
 
-    subgraph Backend
-        C[FastAPI Server]
-        D[Database Manager]
-        E[Metric Scheduler]
-    end
-
-    subgraph Data Processing
-        F[MATLAB Scripts]
-        G[SQLite DB]
-    end
-
-    A --> C
-    B --> C
-    C --> D
-    D --> G
-    E --> F
-    F --> C
-    E --> C
+    style SQLite fill:#f7f7f7,stroke:#333,stroke-width:1px
 ```
 
 ## Main Components
