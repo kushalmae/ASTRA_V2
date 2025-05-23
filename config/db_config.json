@@ -1,6 +1,7 @@
 {
     "db_path": "metrics.db",
     "api_port": 5000,
+    "api_url": "http://localhost:5000",
     "data_path": "data/output",
     "scripts": {
       "runMetric1.m": {
