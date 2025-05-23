@@ -72,6 +72,14 @@ flowchart TD
     style SQLite fill:#f7f7f7,stroke:#333,stroke-width:1px
 ```
 
+-Scheduler layer runs MATLAB scripts on a timed cadence (APScheduler) and POSTs any threshold-breaching metrics to the API.
+
+-API layer queues incoming events, commits them to SQLite, and exposes simple REST endpoints for the UI.
+
+-Visualization layer pulls aggregated metrics from those endpoints and renders time-series, tables, and stop-light views in Streamlit.
+
+-A shared config loader supplies paths, thresholds, and connection info to every component.
+
 ## Main Components
 
 ### 1. FastAPI Backend (`src/api/main.py`)
