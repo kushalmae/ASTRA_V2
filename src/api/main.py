@@ -98,7 +98,7 @@ async def log_metric(data: Metric):
 def get_metrics(
     metric: Optional[str] = Query(None, description="Filter by metric name"),
     scid: Optional[str] = Query(None, description="Filter by spacecraft ID"),
-    limit: int = Query(20, ge=1, le=100, description="Number of records to return")
+    limit: int = Query(30, ge=1, le=500, description="Number of records to return")
 ):
     try:
         logger.info(f"Retrieving metrics: SCID={scid}, Metric={metric}, Limit={limit}")
