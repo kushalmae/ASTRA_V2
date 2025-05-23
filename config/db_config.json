@@ -1,5 +1,5 @@
 {
-    "db_path": "metrics.db",
+    "db_path": "data/metrics.db",
     "api_port": 5000,
     "api_url": "http://localhost:5000",
     "data_path": "data/output",

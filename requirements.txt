@@ -4,4 +4,7 @@ pydantic==2.6.1
 matlabengine==9.14.7
 apscheduler==3.11.0
 requests
-debugpy
+streamlit
+pandas
+plotly
+

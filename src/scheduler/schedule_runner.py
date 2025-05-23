@@ -6,13 +6,28 @@ import requests
 import json
 import os
 import sys
+import signal
+import atexit
 
 # Add parent directory to Python path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from utils.config import config
 
-logging.basicConfig(level=logging.INFO)
+project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+log_path = os.path.join(project_root, "logs")
+
+# Configure logging with more detailed format
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler(os.path.join(log_path, 'schduler.log'))
+    ]
+)   
+logger = logging.getLogger(__name__)
+
 SCRIPTS = config["scripts"]
 API_URL = config["api_url"]
 
@@ -61,9 +76,9 @@ def run_matlab_script(script_name):
                             else:
                                 logging.error(f"Failed to log metric for SCID {scid}: {response.text}")
                     else:
-                        logging.info(f"No breaches found for SCID {scid}")
+                        logging.info(f"No breaches found for SCID {scid} in json_output, it's empty")
                 else:
-                    logging.info(f"No breaches found for SCID {scid}")
+                    logging.info(f"No breaches found for SCID {scid}, json_output was not returened")
                     
             except Exception as e:
                 logging.error(f"Error processing SCID {scid}: {e}")
@@ -71,20 +86,78 @@ def run_matlab_script(script_name):
     except Exception as e:
         logging.error(f"MATLAB Engine Error: {e}")
 
+def cleanup():
+    """Cleanup function to be called on exit"""
+    logging.info("Starting cleanup...")
+    try:
+        # First pause the scheduler to prevent new jobs from starting
+        if scheduler.running:
+            scheduler.pause()
+            logging.info("Scheduler paused.")
+            
+            # Wait for any running jobs to complete (with timeout)
+            timeout = 10  # seconds
+            start_time = time.time()
+            while scheduler.get_jobs() and time.time() - start_time < timeout:
+                time.sleep(0.1)
+            
+            # Now shutdown the scheduler
+            scheduler.shutdown(wait=True)
+            logging.info("Scheduler stopped.")
+        
+        # Then stop the MATLAB engine
+        try:
+            eng.quit()
+            logging.info("MATLAB engine stopped.")
+        except Exception as e:
+            logging.error(f"Error stopping MATLAB engine: {e}")
+            
+    except Exception as e:
+        logging.error(f"Error during cleanup: {e}")
+    finally:
+        logging.info("Cleanup completed.")
+
+def signal_handler(signum, frame):
+    """Handle termination signals"""
+    logging.info(f"Received signal {signum}")
+    cleanup()
+    sys.exit(0)
+
 if __name__ == "__main__":
+    # Register cleanup function
+    atexit.register(cleanup)
+    
+    # Register signal handlers
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+    
     scheduler = BackgroundScheduler()
+    
+    # Validate and schedule jobs
     for script_name, script_config in SCRIPTS.items():
-        scheduler.add_job(run_matlab_script, 
-                         'interval', 
-                         seconds=script_config["interval"], 
-                         args=[script_name], 
-                         id=script_name)
+        try:
+           
+            scheduler.add_job(run_matlab_script, 
+                            'interval', 
+                            seconds=script_config["interval"], 
+                            args=[script_name], 
+                            id=script_name)
+            logging.info(f"Scheduled job '{script_name}' to run every {script_config['interval']} seconds")
+            logging.info(f"Job configuration for {script_name}:")
+            for scid, scid_config in script_config["scids"].items():
+                logging.info(f"  SCID {scid}:")
+                logging.info(f"    Metric: {scid_config['metric']}")
+                logging.info(f"    Threshold: {scid_config['threshold']}")
+        except Exception as e:
+            logging.error(f"Failed to schedule job {script_name}: {str(e)}")
+            continue
+    
     scheduler.start()
     logging.info("APScheduler started with MATLAB Engine. Press Ctrl+C to stop.")
+    
     try:
         while True:
             time.sleep(1)
     except (KeyboardInterrupt, SystemExit):
-        scheduler.shutdown()
-        logging.info("Scheduler stopped.")
-        eng.quit()
+        logging.info("Received shutdown signal...")
+        cleanup()

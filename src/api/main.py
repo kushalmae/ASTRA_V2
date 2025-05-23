@@ -8,13 +8,16 @@ from datetime import datetime
 from typing import List, Optional
 import sys
 import os
-import sqlite3
 
 # Add parent directory to Python path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from utils.config import config
-from utils.database import get_db_connection, initialize_db
+from database.db_manager import DatabaseManager
+
+project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+db_path = os.path.join(project_root, config["db_path"])
+log_path = os.path.join(project_root, "logs")
 
 # Configure logging with more detailed format
 logging.basicConfig(
@@ -22,9 +25,9 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler('api.log')
+        logging.FileHandler(os.path.join(log_path, 'api.log'))
     ]
-)
+)   
 logger = logging.getLogger(__name__)
 
 app = FastAPI(
@@ -33,41 +36,26 @@ app = FastAPI(
     version="2.0.0"
 )
 
+@app.get("/")
+async def root():
+    return {
+        "message": "Welcome to ASTRA V2 API",
+        "version": "2.0.0",
+        "endpoints": {
+            "root": "/",
+            "log_metric": "/log_metric",
+            "get_metrics": "/metrics",
+            "health": "/health"
+        },
+        "documentation": "/docs"
+    }
+
 write_queue = Queue()
-db_path = config["db_path"]
+
+# Get absolute path relative to project root
+db_path = os.path.join(project_root, config["db_path"])
+db_manager = DatabaseManager(db_path)
 shutdown_event = threading.Event()
-
-def verify_database():
-    """Verify database connection and table structure"""
-    try:
-        conn = get_db_connection(db_path)
-        cursor = conn.cursor()
-        
-        # Check if metrics table exists
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='metrics'")
-        if not cursor.fetchone():
-            logger.info("Metrics table not found, initializing database...")
-            initialize_db(conn)
-        
-        # Check table structure
-        cursor.execute("PRAGMA table_info(metrics)")
-        columns = cursor.fetchall()
-        logger.info(f"Database table structure: {columns}")
-        
-        conn.close()
-        logger.info("Database verification completed successfully")
-    except Exception as e:
-        logger.error(f"Database verification failed: {e}")
-        raise
-
-def get_connection():
-    try:
-        conn = get_db_connection(db_path)
-        logger.info(f"Database connection established to {db_path}")
-        return conn
-    except Exception as e:
-        logger.error(f"Database connection error: {e}")
-        raise HTTPException(status_code=500, detail="Database connection failed")
 
 class Metric(BaseModel):
     scid: str = Field(..., description="Spacecraft ID")
@@ -98,7 +86,6 @@ async def log_metric(data: Metric):
         
         # Add to queue
         write_queue.put(data.dict())
-        logger.info(f"Metric queued for processing: SCID={data.scid}, Metric={data.metric}")
         return {"status": "queued", "message": "Metric successfully queued for processing"}
     except ValueError:
         logger.error(f"Invalid timestamp format: {data.time}")
@@ -111,43 +98,12 @@ async def log_metric(data: Metric):
 def get_metrics(
     metric: Optional[str] = Query(None, description="Filter by metric name"),
     scid: Optional[str] = Query(None, description="Filter by spacecraft ID"),
-    limit: int = Query(10, ge=1, le=100, description="Number of records to return")
+    limit: int = Query(20, ge=1, le=100, description="Number of records to return")
 ):
     try:
         logger.info(f"Retrieving metrics: SCID={scid}, Metric={metric}, Limit={limit}")
-        conn = get_connection()
-        cursor = conn.cursor()
-        
-        query = "SELECT scid, time, metric, value, threshold FROM metrics"
-        params = []
-        
-        # Build query based on filters
-        conditions = []
-        if metric:
-            conditions.append("metric = ?")
-            params.append(metric)
-        if scid:
-            conditions.append("scid = ?")
-            params.append(scid)
-            
-        if conditions:
-            query += " WHERE " + " AND ".join(conditions)
-            
-        query += " ORDER BY time DESC LIMIT ?"
-        params.append(limit)
-        
-        logger.info(f"Executing query: {query} with params: {params}")
-        cursor.execute(query, params)
-        rows = cursor.fetchall()
-        
-        # Log the actual data retrieved
-        logger.info(f"Retrieved {len(rows)} rows from database")
-        for row in rows:
-            logger.info(f"Row data: {row}")
-        
-        conn.close()
-        
-        metrics = [{"scid": r[0], "time": r[1], "metric": r[2], "value": r[3], "threshold": r[4]} for r in rows]
+        metrics = db_manager.get_metrics(scid=scid, metric=metric, limit=limit)
+        logger.info(f"Retrieved {len(metrics)} metrics")
         return metrics
     except Exception as e:
         logger.error(f"Error retrieving metrics: {e}")
@@ -156,45 +112,29 @@ def get_metrics(
 @app.get("/health")
 def health():
     queue_size = write_queue.qsize()
-    logger.info(f"Health check - Queue size: {queue_size}")
+    metrics_count = db_manager.get_metrics_count()
+    logger.info(f"Health check - Queue size: {queue_size}, Total metrics: {metrics_count}")
     return {
         "status": "ok",
         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "queue_size": queue_size
+        "queue_size": queue_size,
+        "total_metrics": metrics_count
     }
 
 def db_writer():
-    conn = get_db_connection(db_path)
-    initialize_db(conn)
-    cursor = conn.cursor()
     logger.info("Database writer thread started")
     
     while not shutdown_event.is_set():
         try:
             data = write_queue.get(timeout=1)
-            try:
-                logger.info(f"Writing metric to database: SCID={data['scid']}, Metric={data['metric']}, Value={data['value']}")
-                
-                # Verify the data before insertion
-                logger.info(f"Inserting data: {data}")
-                
-                cursor.execute(
-                    "INSERT INTO metrics (scid, time, metric, value, threshold) VALUES (?, ?, ?, ?, ?)",
-                    (data['scid'], data['time'], data['metric'], data['value'], data['threshold'])
-                )
-                conn.commit()
-                
-                # Verify the insertion
-                cursor.execute(
-                    "SELECT * FROM metrics WHERE scid = ? AND time = ? AND metric = ?",
-                    (data['scid'], data['time'], data['metric'])
-                )
-                inserted = cursor.fetchone()
-                if inserted:
-                    logger.info(f"Successfully verified insertion: {inserted}")
+            try:                             
+                if db_manager.insert_metric(data):
+                    logger.info(f"Successfully wrote metric to database: SCID={data['scid']}, Metric={data['metric']}, Value={data['value']}")
                 else:
-                    logger.error("Insertion verification failed - data not found in database")
-                
+                    logger.error("Failed to write metric to database")
+                    # Keep the item in queue for retry
+                    write_queue.put(data)
+                    
             except Exception as e:
                 logger.error(f"Database write error: {e}")
                 # Keep the item in queue for retry
@@ -204,7 +144,6 @@ def db_writer():
         except Exception as e:
             logger.error(f"Unexpected error in db_writer: {e}")
     
-    conn.close()
     logger.info("Database writer thread stopped")
 
 def shutdown():
@@ -212,9 +151,6 @@ def shutdown():
     logger.info("Shutting down writer thread...")
 
 if __name__ == "__main__":
-    # Verify database on startup
-    verify_database()
-    
     atexit.register(shutdown)
     threading.Thread(target=db_writer, daemon=True).start()
     import uvicorn
