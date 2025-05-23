@@ -1,0 +1,5 @@
+fastapi==0.109.2
+uvicorn==0.27.1
+pydantic==2.6.1
+matlabengine==9.14.7
+apscheduler==3.11.0

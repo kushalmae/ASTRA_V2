@@ -1,0 +1,34 @@
+{
+    "db_path": "metrics.db",
+    "api_port": 5000,
+    "data_path": "data/output",
+    "scripts": {
+      "runMetric1.m": {
+        "interval": 60,
+        "scids": {
+          "1": {
+            "metric": "temperature",
+            "threshold": 25.5
+          },
+          "2": {
+            "metric": "temperature",
+            "threshold": 27.0
+          }
+        }
+      },
+      "runMetric2.m": {
+        "interval": 120,
+        "scids": {
+          "1": {
+            "metric": "pressure",
+            "threshold": 1013.25
+          },
+          "4": {
+            "metric": "pressure",
+            "threshold": 1015.0
+          }
+        }
+      }
+    }
+  }
+  
